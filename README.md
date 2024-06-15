@@ -1,6 +1,6 @@
 # Quest: Query-Aware Sparsity for Efficient Long-Context LLM Inference
 
-[[paper](./assets/quest_paper.pdf)] [[poster (draft)](./assets/quest_poster.pdf)]
+[[paper](./assets/quest_paper.pdf)] [[poster(draft)](./assets/quest_poster.pdf)]
 
 ![](./assets/figures/fig-teaser.png)
 ![](./assets/figures/demo.gif)
