@@ -1,0 +1,15 @@
+[submodule "kernels/3rdparty/flashinfer"]
+	path = kernels/3rdparty/flashinfer
+	url = https://github.com/flashinfer-ai/flashinfer.git
+[submodule "kernels/3rdparty/googletest"]
+	path = kernels/3rdparty/googletest
+	url = https://github.com/google/googletest.git
+[submodule "kernels/3rdparty/nvbench"]
+	path = kernels/3rdparty/nvbench
+	url = https://github.com/NVIDIA/nvbench.git
+[submodule "kernels/3rdparty/pybind"]
+	path = kernels/3rdparty/pybind
+	url = https://github.com/pybind/pybind11.git
+[submodule "kernels/3rdparty/raft"]
+	path = kernels/3rdparty/raft
+	url = https://github.com/rapidsai/raft.git
