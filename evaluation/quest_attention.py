@@ -1,5 +1,5 @@
 import math
-import numpy as np 
+import numpy as np
 from typing import Optional, Tuple, Union
 
 import torch
@@ -10,7 +10,12 @@ from torch.cuda.amp import autocast
 
 import types
 
-from transformers.models.llama.modeling_llama import LlamaAttention, apply_rotary_pos_emb, repeat_kv
+from transformers.models.llama.modeling_llama import (
+    LlamaAttention,
+    apply_rotary_pos_emb,
+    repeat_kv,
+)
+
 
 def local_heavy_hitter_mask(attn_weights, token_budget, chunk_size):
     # attn_weights (BS, head, query, keys)
@@ -72,19 +77,41 @@ def forward(
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
     bsz, q_len, _ = hidden_states.size()
-    
-    if q_len > 1 or self.layer_id < 2:
-        return self.flash_forward(hidden_states, attention_mask, position_ids, past_key_value, output_attentions, use_cache, **kwargs)
 
-    query_states = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-    key_states = self.k_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-    value_states = self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+    if q_len > 1 or self.layer_id < 2:
+        return self.flash_forward(
+            hidden_states,
+            attention_mask,
+            position_ids,
+            past_key_value,
+            output_attentions,
+            use_cache,
+            **kwargs,
+        )
+
+    query_states = (
+        self.q_proj(hidden_states)
+        .view(bsz, q_len, self.num_heads, self.head_dim)
+        .transpose(1, 2)
+    )
+    key_states = (
+        self.k_proj(hidden_states)
+        .view(bsz, q_len, self.num_key_value_heads, self.head_dim)
+        .transpose(1, 2)
+    )
+    value_states = (
+        self.v_proj(hidden_states)
+        .view(bsz, q_len, self.num_key_value_heads, self.head_dim)
+        .transpose(1, 2)
+    )
 
     kv_seq_len = key_states.shape[-2]
     if past_key_value is not None:
         kv_seq_len += past_key_value[0].shape[-2]
     cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-    query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+    query_states, key_states = apply_rotary_pos_emb(
+        query_states, key_states, cos, sin, position_ids
+    )
     # [bsz, nh, t, hd]
 
     if past_key_value is not None:
@@ -93,16 +120,18 @@ def forward(
         value_states = torch.cat([past_key_value[1], value_states], dim=2)
 
     past_key_value = (key_states, value_states) if use_cache else None
-    
+
     key_states = repeat_kv(key_states, self.num_key_value_groups)
     value_states = repeat_kv(value_states, self.num_key_value_groups)
 
-    attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
-    
+    attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(
+        self.head_dim
+    )
+
     sign = (query_states > 0) + (~(query_states > 0)) * -1
     max_key = key_states * sign
     postive_query = query_states * sign
-    
+
     # expend max_key to be divisible by chunk_size
     seq_length = max_key.shape[-2]
     padding_length = self.chunk_size - ((seq_length - 1) % self.chunk_size + 1)
@@ -110,19 +139,14 @@ def forward(
         [
             max_key,
             torch.ones(
-                (
-                    max_key.shape[0],
-                    max_key.shape[1],
-                    padding_length,
-                    max_key.shape[3]
-                ),
+                (max_key.shape[0], max_key.shape[1], padding_length, max_key.shape[3]),
                 device=max_key.device,
             )
             * torch.tensor(torch.finfo(max_key.dtype).min),
         ],
         dim=-2,
     )
-    
+
     # chunk max_key into chunk_size tokens
     chunk_max_key = max_key.reshape(
         max_key.shape[0],
@@ -131,13 +155,13 @@ def forward(
         self.chunk_size,
         max_key.shape[3],
     ).amax(dim=-2)
-    
+
     # duplicate chunk_max_key chunk_size times
-    chunk_max_key = chunk_max_key.unsqueeze(-2).repeat(
-        1, 1, 1, self.chunk_size, 1
-    )
+    chunk_max_key = chunk_max_key.unsqueeze(-2).repeat(1, 1, 1, self.chunk_size, 1)
     # reshape chunk_max_key to the original shape
-    chunk_max_key = chunk_max_key.reshape(chunk_max_key.shape[0], chunk_max_key.shape[1], -1, chunk_max_key.shape[-1])[:, :, :seq_length, :]
+    chunk_max_key = chunk_max_key.reshape(
+        chunk_max_key.shape[0], chunk_max_key.shape[1], -1, chunk_max_key.shape[-1]
+    )[:, :, :seq_length, :]
 
     quantized_weight = torch.matmul(
         postive_query.float(),
@@ -200,6 +224,7 @@ def forward(
 
     return attn_output, attn_weights, past_key_value
 
+
 def forward_yarn(
     self,
     hidden_states: torch.Tensor,
@@ -221,7 +246,7 @@ def forward_yarn(
             past_key_value,
             output_attentions,
             use_cache,
-            is_padded_inputs
+            is_padded_inputs,
         )
 
     has_layer_past = past_key_value is not None
@@ -331,7 +356,7 @@ def forward_yarn(
     sign = (q > 0) + (~(q > 0)) * -1
     max_key = k * sign
     postive_query = q * sign
-    
+
     # expend max_key to be divisible by chunk_size
     seq_length = max_key.shape[-2]
     padding_length = self.chunk_size - ((seq_length - 1) % self.chunk_size + 1)
@@ -339,19 +364,14 @@ def forward_yarn(
         [
             max_key,
             torch.ones(
-                (
-                    max_key.shape[0],
-                    max_key.shape[1],
-                    padding_length,
-                    max_key.shape[3]
-                ),
+                (max_key.shape[0], max_key.shape[1], padding_length, max_key.shape[3]),
                 device=max_key.device,
             )
             * torch.tensor(torch.finfo(max_key.dtype).min),
         ],
         dim=-2,
     )
-    
+
     # chunk max_key into chunk_size tokens
     chunk_max_key = max_key.reshape(
         max_key.shape[0],
@@ -360,13 +380,13 @@ def forward_yarn(
         self.chunk_size,
         max_key.shape[3],
     ).amax(dim=-2)
-    
+
     # duplicate chunk_max_key chunk_size times
-    chunk_max_key = chunk_max_key.unsqueeze(-2).repeat(
-        1, 1, 1, self.chunk_size, 1
-    )
+    chunk_max_key = chunk_max_key.unsqueeze(-2).repeat(1, 1, 1, self.chunk_size, 1)
     # reshape chunk_max_key to the original shape
-    chunk_max_key = chunk_max_key.reshape(chunk_max_key.shape[0], chunk_max_key.shape[1], -1, chunk_max_key.shape[-1])[:, :, :seq_length, :]
+    chunk_max_key = chunk_max_key.reshape(
+        chunk_max_key.shape[0], chunk_max_key.shape[1], -1, chunk_max_key.shape[-1]
+    )[:, :, :seq_length, :]
 
     quantized_weight = torch.matmul(
         postive_query.float(),
@@ -433,8 +453,10 @@ def forward_yarn(
 
     return attn_output, attn_weights, past_key_value
 
+
 global layer_id
 layer_id = 32
+
 
 def enable_quest_attention_eval(model, args):
     for name, module in reversed(model._modules.items()):

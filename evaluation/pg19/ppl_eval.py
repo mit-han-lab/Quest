@@ -4,8 +4,7 @@ import os
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
 from torch.nn import CrossEntropyLoss
-# from streaming_llm.kv_cache import StartRecentKVCache
-# from streaming_llm.utils import parse_args, load
+
 import argparse
 from argparse import ArgumentParser
 
@@ -26,6 +25,7 @@ parser.add_argument("--num_eval_tokens", type=int, default=None)
 parser.add_argument("--quest", action="store_true", help="Enable quest attention")
 parser.add_argument("--token_budget", type=int, default=1024)
 parser.add_argument("--chunk_size", type=int, default=16)
+
 
 def load(model_name_or_path):
     print(f"Loading model from {model_name_or_path} ...")
@@ -50,9 +50,10 @@ def load(model_name_or_path):
 
     return model, tokenizer
 
+
 args = parser.parse_args()
 
-data = load_dataset('emozilla/pg19-test', split='test')
+data = load_dataset("emozilla/pg19-test", split="test")
 
 model, tokenizer = load(args.model_name_or_path)
 
@@ -65,6 +66,7 @@ if args.quest:
     from evaluation.quest_attention import (
         enable_quest_attention_eval,
     )
+
     enable_quest_attention_eval(model, args)
 
 os.makedirs(args.output_dir, exist_ok=True)
@@ -92,7 +94,7 @@ for text in data["text"][:1]:
             past_key_values = outputs.past_key_values
             label = encodings.input_ids[:, idx + 1 : idx + 2].to(logits.device).view(-1)
             neg_log_likelihood = loss_fn(logits, label)
-            
+
         nlls.append(neg_log_likelihood)
         pbar.set_description(
             f"nll: {neg_log_likelihood.item():.2f}, ppl: {torch.exp(neg_log_likelihood).item():.2f}"
