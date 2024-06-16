@@ -19,14 +19,7 @@ parser.add_argument("--token_budget", type=int, default=1024)
 args = parser.parse_args()
 
 if args.method == "quest":
-    # Use local quest as a package
-    import sys
-    import os
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    parent_dir = os.path.dirname(current_dir)
-    sys.path.append(parent_dir)
     from quest import LlamaForCausalLM
-    
     model = LlamaForCausalLM.from_pretrained(MODEL_PATH, device_map=DEVICE, torch_dtype=DTYPE)
 
     # Init Quest Controller
