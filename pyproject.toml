@@ -37,6 +37,8 @@ dependencies = [
     "jieba==0.42.1",
     "fuzzywuzzy==0.18.0",
     "rouge==1.0.1",
+    "pytest==8.2.2",
+    "textual==0.68.0",
 ]
 
 [tool.setuptools.packages.find]

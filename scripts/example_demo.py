@@ -6,6 +6,8 @@
 import dataclasses
 import threading
 import time
+import sys
+import os
 from collections.abc import Callable
 
 import numpy as np
@@ -245,11 +247,6 @@ class InferSpec:
     stop_token_id: int
     ctx_id: str
 
-import sys
-import os
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
 import quest
 
 QuestSpec = InferSpec(
@@ -296,6 +293,8 @@ DemoSpec = [
     # FlashSpec,
 ]
 
+# Use file as long-context prompt input
+# change it to your own prompt file
 PromptPath = "./sample.prompt"
 
 def main(ctxList: list[GenCtx], append_box: Callable[[str, str], None]):

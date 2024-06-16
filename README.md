@@ -27,6 +27,9 @@ conda create -yn quest python=3.10
 conda activate quest
 pip install -e . && pip install flash-attn==2.3.0 --no-build-isolation
 
+# Install CMake (with version >= 3.26.4)
+conda install cmake
+
 # build libraft
 cd kernels/3rdparty/raft
 ./build.sh libraft
@@ -110,10 +113,10 @@ We provide several examples to demonstrate the usage of Quest. These examples ar
 ```
 python3 scripts/example_textgen.py
 ```
-With example output of long-context summarization under LongChat-7B model:
-![](./assets/figures/fig-example.png)
+With example output of long-context summarization under LongChat-7B-v1.5-32K model:
+![](./assets/figures/fig-examples.png)
 
-You can also try `scripts/example/demo.py` to test the performance of Quest on your own text generation tasks. We provide a simple interface to load the model and generate text with Quest operators. Below is an example with 32K input on FP16 LongChat-7B-v1.5-32K. Quest with 2048 token budget achieves 1.7x speedup compared to full cache FlashInfer version.
+You can also try `scripts/example_demo.py` to test the performance of Quest on your own text generation tasks. We provide a simple interface to load the model and generate text with Quest operators. The above demo is an example with 32K input on FP16 LongChat-7B-v1.5-32K. Quest with 2048 token budget achieves 1.7x speedup compared to full cache FlashInfer version.
 
 ## TODOs
 
