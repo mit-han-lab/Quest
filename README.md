@@ -1,6 +1,6 @@
 # Quest: Query-Aware Sparsity for Efficient Long-Context LLM Inference
 
-[[paper](./assets/quest_paper.pdf)] [[poster(draft)](./assets/quest_poster.pdf)]
+[[paper](https://arxiv.org/abs/2406.10774)] [[poster(draft)](./assets/quest_poster.pdf)]
 
 ![](./assets/figures/fig-teaser.png)
 ![](./assets/figures/demo.gif)
@@ -124,19 +124,19 @@ You can also try `scripts/example_demo.py` to test the performance of Quest on y
 ## Reference
 If you find this project is helpful to your research, please consider to cite our paper:
 ```
-@inproceedings{tang2024quest,
-  title={{QUEST: Query-Aware Sparsity for Efficient Long-Context LLM Inference}},
-  author={Jiaming Tang and Yilong Zhao and Kan Zhu and Guangxuan Xiao and Baris Kasikci and Song Han},
-  booktitle={Proceedings of the International Conference on Machine Learning (ICML)},
-  year={2024},
-  url={https://arxiv.org/abs/XXXX.XXXXX},
-  note={To appear}
+@misc{tang2024quest,
+      title={Quest: Query-Aware Sparsity for Efficient Long-Context LLM Inference}, 
+      author={Jiaming Tang and Yilong Zhao and Kan Zhu and Guangxuan Xiao and Baris Kasikci and Song Han},
+      year={2024},
+      eprint={2406.10774},
+      archivePrefix={arXiv},
+      primaryClass={id='cs.CL' full_name='Computation and Language' is_active=True alt_name='cmp-lg' in_archive='cs' is_general=False description='Covers natural language processing. Roughly includes material in ACM Subject Class I.2.7. Note that work on artificial languages (programming languages, logics, formal systems) that does not explicitly address natural-language issues broadly construed (natural-language processing, computational linguistics, speech, text retrieval, etc.) is not appropriate for this area.'}
 }
 ```
 
 ## Related Projects
 
-This codebase utilizes [lm_eval](https://github.com/EleutherAI/lm-evaluation-harness.git) to evaluate perplexity and zero-shot accuracy. It also adapts code snippets from [H2O](https://github.com/FMInference/H2O), [StreamingLLM](https://github.com/mit-han-lab/streaming-llm) and [Punica](https://github.com/punica-ai/punica). Our kernels are implemented based on [FlashInfer](https://github.com/flashinfer-ai/flashinfer) and tested by [NVBench](https://github.com/NVIDIA/nvbench/tree/main). Thanks for the great works from our community!
+This codebase utilizes [lm_eval](https://github.com/EleutherAI/lm-evaluation-harness.git) to evaluate perplexity and zero-shot accuracy. It also adapts code snippets from [H2O](https://github.com/FMInference/H2O), [StreamingLLM](https://github.com/mit-han-lab/streaming-llm) and [Punica](https://github.com/punica-ai/punica). Our kernels are implemented based on [FlashInfer](https://github.com/flashinfer-ai/flashinfer) (a performant and extensible kernel library for LLM serving) and tested by [NVBench](https://github.com/NVIDIA/nvbench/tree/main). Thanks for the great works from our community!
 
 
 [H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models](https://github.com/FMInference/H2O)
