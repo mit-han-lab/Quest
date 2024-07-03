@@ -33,7 +33,7 @@ conda install cmake
 cd kernels/3rdparty/raft
 ./build.sh libraft
 ```
-3. Compile kernel benchmarks (Optional)
+3. Compile kernel benchmarks (Optional). Remember to configure env variables for CUDA (Check the [tutorial](https://faculty.cc.gatech.edu/~hyesoon/spr09/installcuda.html)).
 ```
 cd kernels
 mkdir build && cd build
