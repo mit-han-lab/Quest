@@ -233,7 +233,7 @@ def seed_everything(seed):
 
 
 def load_model_and_tokenizer(path, model_name, device):
-    if 'llama' in model_name.lower():
+    if 'llama' in model_name.lower() or 'longchat' in model_name.lower():
         enable_tuple_kv_cache_for_llama()
     if 'mistral' in model_name.lower():
         enable_tuple_kv_cache_for_mistral()

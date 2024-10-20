@@ -165,7 +165,7 @@ def main(args):
     for model in models:
         torch.cuda.empty_cache()
 
-        if 'llama' in model.lower():
+        if 'llama' in model.lower() or 'longchat' in model.lower():
             enable_tuple_kv_cache_for_llama()
         if 'mistral' in model.lower():
             enable_tuple_kv_cache_for_mistral()
