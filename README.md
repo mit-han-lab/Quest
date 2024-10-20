@@ -27,18 +27,12 @@ cd quest
 conda create -yn quest python=3.10
 conda activate quest
 
-pip install torch torchvision torchaudio
-
-pip install transformers accelerate sentencepiece datasets wandb accelerate sentencepiece datasets wandb zstandard matplotlib 
-
-# LongBench evaluation
-pip install jieba fuzzywuzzy seaborn rouge_score einops pandas fastchat
+# Quest
+pip install -e .
 
 # Flash-Attention
 pip install ninja packaging
 pip install flash-attn --no-build-isolation
-
-pip install -e .
 
 # Install CMake (with version >= 3.26.4)
 conda install cmake

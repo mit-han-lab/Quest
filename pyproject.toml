@@ -1,10 +1,31 @@
 [build-system]
-requires = ["setuptools", "wheel", "packaging"]
+requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "quest"
 version = "0.0.1"
+
+dependencies = [
+    "torch==2.5.0",
+    "torchaudio==2.5.0",
+    "torchvision==0.20.0",
+    "transformers==4.45.2",
+    "accelerate==1.0.1",
+    "sentencepiece==0.2.0",
+    "datasets==3.0.1",
+    "wandb==0.18.5",
+    "zstandard==0.23.0",
+    "matplotlib==3.9.2",
+    "jieba==0.42.1",
+    "fuzzywuzzy==0.18.0",
+    "seaborn==0.13.2",
+    "rouge_score==0.1.2",
+    "einops==0.8.0",
+    "pandas==2.2.3",
+    "fastchat==0.1.0",
+    "numpy==2.1.2"
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
