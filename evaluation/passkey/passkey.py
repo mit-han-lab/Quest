@@ -7,11 +7,11 @@ import os
 import torch
 import warnings
 from transformers import AutoTokenizer, pipeline, AutoModelForCausalLM
-from transformers.models.llama.modeling_llama import LlamaAttention
 from tqdm import tqdm, trange
 from tqdm.contrib import tenumerate
 
-from evaluation.flash_attn_monkey_patch import replace_llama_attn_with_flash_attn
+from evaluation.llama import enable_tuple_kv_cache_for_llama
+from evaluation.mistral import enable_tuple_kv_cache_for_mistral
 
 # from https://github.com/epfml/landmark-attention/blob/main/llama/run_test.py
 
@@ -130,6 +130,7 @@ def main(args):
     )
 
     if args.fixed_length:
+        args.fixed_length = args.fixed_length * 4
         lengths = [args.fixed_length]
         tokens = [len(tokenizer.encode(generate_prompt(args.fixed_length, 0)[0]))]
         print(f"Prompt is {tokens[0]} tokens")
@@ -161,10 +162,13 @@ def main(args):
             print(f"{target} tokens = {last_n} length")
 
     results = []
-    for model in tqdm(models, desc="Model", leave=False):
+    for model in models:
         torch.cuda.empty_cache()
 
-        replace_llama_attn_with_flash_attn()
+        if 'llama' in model.lower():
+            enable_tuple_kv_cache_for_llama()
+        if 'mistral' in model.lower():
+            enable_tuple_kv_cache_for_mistral()
 
         loaded = AutoModelForCausalLM.from_pretrained(
             model,

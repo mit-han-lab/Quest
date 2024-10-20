@@ -13,11 +13,9 @@ from tqdm import tqdm
 import numpy as np
 import random
 import argparse
-from evaluation.flash_attn_monkey_patch import (
-    replace_llama_attn_with_flash_attn,
-    replace_mistral_attn_with_flash_attn,
-)
 from evaluation.quest_attention import enable_quest_attention_eval
+from evaluation.llama import enable_tuple_kv_cache_for_llama 
+from evaluation.mistral import enable_tuple_kv_cache_for_mistral
 
 
 def parse_args(args=None):
@@ -35,7 +33,8 @@ def parse_args(args=None):
             "chatglm2-6b-32k",
             "chatglm3-6b-32k",
             "vicuna-v1.5-7b-16k",
-            "Mistral-7B-v0.2-hf",
+            "Mistral-7B-Instruct-v0.3",
+            "Meta-Llama-3.1-8B-Instruct",
         ],
     )
     parser.add_argument("--e", action="store_true", help="Evaluate on LongBench-E")
@@ -234,32 +233,15 @@ def seed_everything(seed):
 
 
 def load_model_and_tokenizer(path, model_name, device):
-    if "chatglm" in model_name or "internlm" in model_name or "xgen" in model_name:
-        tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained(
-            path, trust_remote_code=True, torch_dtype=torch.bfloat16
-        ).to(device)
-    elif "llama2" in model_name:
-        # replace_llama_attn_with_flash_attn()
-        tokenizer = LlamaTokenizer.from_pretrained(path)
-        model = LlamaForCausalLM.from_pretrained(path, torch_dtype=torch.bfloat16).to(
-            device
-        )
-    elif "longchat" in model_name or "vicuna" in model_name:
-        # from fastchat.model import load_model
-        replace_llama_attn_with_flash_attn()
-        model = AutoModelForCausalLM.from_pretrained(
-            path, trust_remote_code=True, torch_dtype=torch.float16, device_map="auto"
-        )
-        tokenizer = AutoTokenizer.from_pretrained(
-            path, trust_remote_code=True, use_fast=False
-        )
-    elif "Mistral" in model_name:
-        replace_mistral_attn_with_flash_attn()
-        tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained(
-            path, trust_remote_code=True, torch_dtype=torch.bfloat16, device_map="auto"
-        )
+    if 'llama' in model_name.lower():
+        enable_tuple_kv_cache_for_llama()
+    if 'mistral' in model_name.lower():
+        enable_tuple_kv_cache_for_mistral()
+        
+    tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        path, trust_remote_code=True, torch_dtype=torch.bfloat16, device_map="auto"
+    )
     model = model.eval()
 
     if args.quest:
@@ -315,7 +297,7 @@ if __name__ == "__main__":
             if args.quest:
                 out_path = f"pred_e/{model_name}/{dataset}-{args.token_budget}.jsonl"
             else:
-                out_path = f"pred_e/{model_name}/{dataset}.jsonl"
+                out_path = f"pred_e/{model_name}/{dataset}-full.jsonl"
         else:
             data = load_dataset("THUDM/LongBench", dataset, split="test")
             if not os.path.exists(f"pred/{model_name}"):
@@ -323,7 +305,7 @@ if __name__ == "__main__":
             if args.quest:
                 out_path = f"pred/{model_name}/{dataset}-{args.token_budget}.jsonl"
             else:
-                out_path = f"pred/{model_name}/{dataset}.jsonl"
+                out_path = f"pred/{model_name}/{dataset}-full.jsonl"
         prompt_format = dataset2prompt[dataset]
         max_gen = dataset2maxlen[dataset]
         preds = get_pred(
