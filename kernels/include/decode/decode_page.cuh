@@ -31,6 +31,11 @@
 #include "flashinfer/utils.cuh"
 #include "flashinfer/vec_dtypes.cuh"
 
+#ifndef CUDART_MAX_NORMAL_FP16
+	// Introduced in CUDA 12.3
+	#define CUDART_MAX_NORMAL_FP16 (__float2half(65504.0f))
+#endif
+
 namespace flashinfer
 {
 

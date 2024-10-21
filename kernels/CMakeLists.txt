@@ -4,7 +4,10 @@ set(CMAKE_CXX_COMPILER "/usr/bin/g++-11")
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
-set(CMAKE_CUDA_ARCHITECTURES 89)
+
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES native)
+endif()
 
 # ------------- configure rapids-cmake --------------#
 include(${CMAKE_SOURCE_DIR}/cmake/fetch_rapids.cmake)

@@ -7,5 +7,6 @@
     "chatglm2-6b-32k": 31500,
     "chatglm3-6b-32k": 31500,
     "vicuna-v1.5-7b-16k": 15500, 
-    "Mistral-7B-v0.2-hf": 31500
+    "Mistral-7B-Instruct-v0.3": 31500, 
+    "Meta-Llama-3.1-8B-Instruct": 1047500
 }

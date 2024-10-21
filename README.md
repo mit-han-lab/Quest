@@ -5,6 +5,8 @@
 ![](./assets/figures/fig-teaser.png)
 ![](./assets/figures/demo.gif)
 
+## News
+- [2024/10] 🔥 We released Quest support for the **Llama-3.1** and **Mistral-v0.3** model family! Check out our example [here](/scripts/passkey.sh).
 
 ## TL;DR
 Quest is an efficient long-context LLM inference framework that leverages **query-aware sparsity** in KV cache to reduce memory movement during attention and thus boost throughput. 
@@ -24,7 +26,13 @@ cd quest
 ```
 conda create -yn quest python=3.10
 conda activate quest
-pip install -e . && pip install flash-attn==2.3.0 --no-build-isolation
+
+# Quest
+pip install -e .
+
+# Flash-Attention
+pip install ninja packaging
+pip install flash-attn==2.6.3 --no-build-isolation
 
 # Install CMake (with version >= 3.26.4)
 conda install cmake
@@ -119,7 +127,7 @@ You can also try `scripts/example_demo.py` to test the performance of Quest on y
 
 ## TODOs
 
-- [ ] Support GQA models
+- [x] Support GQA models
 
 ## Reference
 If you find this project is helpful to your research, please consider to cite our paper:
