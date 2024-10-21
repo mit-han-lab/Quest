@@ -32,7 +32,7 @@ pip install -e .
 
 # Flash-Attention
 pip install ninja packaging
-pip install flash-attn --no-build-isolation
+pip install flash-attn==2.6.3 --no-build-isolation
 
 # Install CMake (with version >= 3.26.4)
 conda install cmake
