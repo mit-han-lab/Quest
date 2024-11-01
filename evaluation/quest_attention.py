@@ -16,6 +16,8 @@ from transformers.models.llama.modeling_llama import (
     repeat_kv,
 )
 
+from transformers.cache_utils import DynamicCache
+
 from transformers.models.mistral.modeling_mistral import MistralAttention
 
 def local_heavy_hitter_mask(attn_weights, token_budget, chunk_size):
@@ -105,22 +107,34 @@ def forward(
         .view(bsz, q_len, self.num_key_value_heads, self.head_dim)
         .transpose(1, 2)
     )
-
-    kv_seq_len = key_states.shape[-2]
-    if past_key_value is not None:
-        kv_seq_len += past_key_value[0].shape[-2]
+    
+    # New cache format
+    if isinstance(past_key_value, DynamicCache):
+        kv_seq_len = past_key_value.get_seq_length()
+    # Legacy cache format
+    else:
+        kv_seq_len = key_states.shape[-2]
+        if past_key_value is not None:
+            assert isinstance(past_key_value, tuple)
+            kv_seq_len += past_key_value[0].shape[-2]
+    
     cos, sin = self.rotary_emb(value_states, position_ids.to(value_states.device))
     query_states, key_states = apply_rotary_pos_emb(
         query_states, key_states, cos, sin, position_ids
     )
     # [bsz, nh, t, hd]
 
-    if past_key_value is not None:
-        # reuse k, v, self_attention
-        key_states = torch.cat([past_key_value[0], key_states], dim=2)
-        value_states = torch.cat([past_key_value[1], value_states], dim=2)
-
-    past_key_value = (key_states, value_states) if use_cache else None
+    # New cache format
+    if isinstance(past_key_value, DynamicCache):
+        if use_cache:
+            key_states, value_states = past_key_value.update(key_states, value_states, layer_idx=self.layer_idx)
+    # Legacy cache format
+    else:
+        if past_key_value is not None:
+            # reuse k, v, self_attention
+            key_states = torch.cat([past_key_value[0], key_states], dim=2)
+            value_states = torch.cat([past_key_value[1], value_states], dim=2)
+        past_key_value = (key_states, value_states) if use_cache else None
 
     key_states = repeat_kv(key_states, self.num_key_value_groups)
     value_states = repeat_kv(value_states, self.num_key_value_groups)
