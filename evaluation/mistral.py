@@ -497,6 +497,7 @@ def enable_tuple_kv_cache_for_mistral():
     transformers.models.mistral.modeling_mistral.MistralDecoderLayer.forward = old_mistral_decoder_layer_forward
     transformers.models.mistral.modeling_mistral.MistralAttention.forward = old_flash_attention_2_forward
     transformers.models.mistral.modeling_mistral.MistralSdpaAttention.forward = old_flash_attention_2_forward
+    transformers.models.mistral.modeling_mistral.MistralFlashAttention2.forward = old_flash_attention_2_forward
     transformers.models.mistral.modeling_mistral.MistralAttention._upad_input = _upad_input
     transformers.models.mistral.modeling_mistral.MistralAttention._flash_attention_forward = _flash_attention_forward
     transformers.models.mistral.modeling_mistral.MistralForCausalLM.forward = old_mistral_for_causal_lm_forward
