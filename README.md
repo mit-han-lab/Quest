@@ -6,13 +6,14 @@
 ![](./assets/figures/demo.gif)
 
 ## News
+- [2026/02] 🐳 We added **Docker support** and a standardized installation environment, significantly improving reproducibility across different hardware (verified on NVIDIA H20 and RTX 4090).
 - [2024/10] 🔥 We released Quest support for the **Llama-3.1** and **Mistral-v0.3** model family! Check out our example [here](/scripts/passkey.sh).
 
 ## TL;DR
-Quest is an efficient long-context LLM inference framework that leverages **query-aware sparsity** in KV cache to reduce memory movement during attention and thus boost throughput. 
+Quest is an efficient long-context LLM inference framework that leverages **query-aware sparsity** in KV cache to reduce memory movement during attention and thus boost throughput.
 
 ## Abstract
-As the demand for long-context large language models (LLMs) increases, models with context windows of up to 128k or 1M tokens are becoming increasingly prevalent. However, long-context LLM inference is challenging since the inference speed decreases significantly as the sequence length grows. This slowdown is primarily caused by loading a large KV cache during self-attention. Previous works have shown that a small portion of critical tokens will dominate the attention outcomes. However, we observe the criticality of a token highly depends on the query. 
+As the demand for long-context large language models (LLMs) increases, models with context windows of up to 128k or 1M tokens are becoming increasingly prevalent. However, long-context LLM inference is challenging since the inference speed decreases significantly as the sequence length grows. This slowdown is primarily caused by loading a large KV cache during self-attention. Previous works have shown that a small portion of critical tokens will dominate the attention outcomes. However, we observe the criticality of a token highly depends on the query.
 
 To this end, we propose Quest, a query-aware token criticality estimation algorithm. Quest keeps track of the minimal and maximal Key values in KV cache pages and estimates the criticality of a given page using Query vectors. By only loading the Top-K critical KV cache pages for attention, Quest significantly speeds up self-attention without sacrificing accuracy. We show that Quest can achieve up to 7.03× self-attention speedup, which reduces inference latency by 2.23× while performing well on tasks with long dependencies with negligible accuracy loss.
 
@@ -54,6 +55,65 @@ make -j
 cd quest/ops
 bash setup.sh
 ```
+
+## Docker Installation (Recommended)
+
+1. **Clone the repository** (including submodules):
+
+```shell
+git clone --recurse-submodules https://github.com/mit-han-lab/quest
+cd quest
+```
+
+2. **Build and launch the Docker container**:
+
+In this step, we mount the **Quest project directory** and the **HuggingFace model cache** (or your local model weights directory) into the container:
+
+```shell
+docker build -t quest-env .
+docker run -it --gpus all --name="quest" \
+  -v $(pwd):/quest \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  quest-env /bin/bash
+```
+
+Upon entry, the container will be named `quest` and the `quest` conda environment will be automatically activated.
+
+3. **Install Quest** (inside the container):
+
+```shell
+pip install -e .
+```
+
+4. **Build Dependencies**:
+
+```shell
+# Flash-Attention
+pip install flash-attn==2.6.3 --no-build-isolation
+
+# Raft
+cd kernels/3rdparty/raft && ./build.sh libraft
+```
+
+5. **Compile Kernel Benchmarks** (Optional):
+
+Configure your CUDA environment variables if necessary (see this [tutorial](https://faculty.cc.gatech.edu/~hyesoon/spr09/installcuda.html)).
+
+```shell
+cd /quest/kernels
+mkdir build && cd build
+cmake ..
+make -j
+```
+
+6. Build end-to-end operators with PyBind
+
+```shell
+# This will automatically build and link the operators
+cd quest/ops
+bash setup.sh
+```
+
 ## Accuracy Evaluation
 Our evaluations are based on [LongChat-7B-v1.5-32K](https://huggingface.co/lmsys/longchat-7b-v1.5-32k?clone=true) and [Yarn-Llama2-7B-128K](https://huggingface.co/NousResearch/Yarn-Llama-2-7b-128k) models, which are capable of handling long-context text generations. We evaluate both passkey retrieval and LongBench benchmarks. We provide several scripts to reproduce our results in the paper:
 
@@ -133,7 +193,7 @@ You can also try `scripts/example_demo.py` to test the performance of Quest on y
 If you find this project is helpful to your research, please consider to cite our paper:
 ```
 @misc{tang2024quest,
-      title={Quest: Query-Aware Sparsity for Efficient Long-Context LLM Inference}, 
+      title={Quest: Query-Aware Sparsity for Efficient Long-Context LLM Inference},
       author={Jiaming Tang and Yilong Zhao and Kan Zhu and Guangxuan Xiao and Baris Kasikci and Song Han},
       year={2024},
       eprint={2406.10774},
