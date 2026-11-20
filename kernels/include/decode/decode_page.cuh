@@ -328,7 +328,13 @@ struct paged_kv_t {
 																 uint32_t feat_idx,
 																 IdType last_indptr) const {
 		if constexpr(page_storage == PageStorage::kIndices) {
-			if(blockIdx.x == gridDim.x - 1) {
+			// The trailing partial page is held out of `indices` and re-attached as the
+			// final page of the whole range. Identify it by its position in that range,
+			// not by the block: the partition path gives it a block of its own, so
+			// `blockIdx.x == gridDim.x - 1` also meant "this page" there -- but with a
+			// single block covering the whole range that test is true for every page,
+			// and every lookup then resolves to the trailing page.
+			if(page_iter == last_indptr - 1) {
 				// This is manully appended last page. Only one page here
 				return data + get_k_elem_offset(last_page_idx, head_idx, entry_idx, feat_idx);
 			} else {

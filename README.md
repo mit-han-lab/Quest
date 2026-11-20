@@ -54,6 +54,9 @@ make -j
 cd quest/ops
 bash setup.sh
 ```
+
+`begin_forward` picks between a single-block decode kernel and a split one from the device occupancy, so any one GPU only ever exercises one of the two. Set `QUEST_DECODE_LAUNCH_SHAPE=single` or `=split` to force the other and cover both anywhere; unset or empty, nothing changes. It raises rather than falling back when the value is unrecognized or when the requested shape cannot be used, so a forced run that passes really did run that shape. `quest/tests/test_decode_launch_shape.py` runs the decode suites once under each.
+
 ## Accuracy Evaluation
 Our evaluations are based on [LongChat-7B-v1.5-32K](https://huggingface.co/lmsys/longchat-7b-v1.5-32k?clone=true) and [Yarn-Llama2-7B-128K](https://huggingface.co/NousResearch/Yarn-Llama-2-7b-128k) models, which are capable of handling long-context text generations. We evaluate both passkey retrieval and LongBench benchmarks. We provide several scripts to reproduce our results in the paper:
 

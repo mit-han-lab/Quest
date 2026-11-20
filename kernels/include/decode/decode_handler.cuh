@@ -46,9 +46,14 @@ public:
 	IdType* GetNewIndPtr() const {
 		return (IdType*)int_buffer_; // + batch_size_after_partition_ + 1;
 	}
+	// Both of these live past the new indptr inside int_buffer_, and only the
+	// partitioning branch of BeginForward lays that region out. int_buffer_ alone no
+	// longer distinguishes the two branches, because the un-partitioned branch also
+	// allocates it, for the extended indptr and nothing else. float_buffer_ does: it is
+	// the temporary the partitioned kernel merges through, and only that branch has one.
 	template <typename IdType>
 	IdType* GetChunkIndPtr() const {
-		if(int_buffer_ != nullptr) {
+		if(int_buffer_ != nullptr && float_buffer_ != nullptr) {
 			return ((IdType*)int_buffer_) + batch_size_after_partition_ +
 				   1; // batch_size_before_partition_ + 1
 		} else {
@@ -57,7 +62,7 @@ public:
 	}
 	template <typename IdType>
 	IdType* GetBatchIdxMap() const {
-		if(int_buffer_ != nullptr) {
+		if(int_buffer_ != nullptr && float_buffer_ != nullptr) {
 			return ((IdType*)int_buffer_) + batch_size_after_partition_ +
 				   batch_size_before_partition_ + 2; // batch_size_after_partition_
 		} else {
@@ -115,6 +120,33 @@ public:
 																		   GetChunkIndPtr<IdType>(),
 																		   GetBatchIdxMap<IdType>(),
 																		   stream_));
+		} else {
+			// No partition: one block spans the whole range. It must therefore also span
+			// the trailing partial page, which the caller holds out of `indices` and the
+			// partition path re-attaches as an extra chunk. With no chunks there is
+			// nothing to carry it, so publish an indptr one page longer and let the block
+			// reach it; the kernel already resolves the final page of the range through
+			// `last_page_idx`.
+			FLASHINFER_CUDA_CALL(
+				cudaMallocAsync(&int_buffer_, sizeof(IdType) * (batch_size + 1), stream_));
+			std::vector<IdType> indptr_h(batch_size + 1);
+			if(is_device_ptr(indptr)) {
+				FLASHINFER_CUDA_CALL(cudaMemcpyAsync(indptr_h.data(),
+													 indptr,
+													 sizeof(IdType) * (batch_size + 1),
+													 cudaMemcpyDeviceToHost,
+													 stream_));
+				FLASHINFER_CUDA_CALL(cudaStreamSynchronize(stream_));
+			} else {
+				indptr_h.assign(indptr, indptr + batch_size + 1);
+			}
+			indptr_h.back() += 1;
+			FLASHINFER_CUDA_CALL(cudaMemcpyAsync(int_buffer_,
+												 indptr_h.data(),
+												 sizeof(IdType) * (batch_size + 1),
+												 cudaMemcpyHostToDevice,
+												 stream_));
+			FLASHINFER_CUDA_CALL(cudaStreamSynchronize(stream_));
 		}
 		forward_started_ = true;
 		return cudaSuccess;
@@ -222,6 +254,10 @@ BatchDecodeWithPagedKVCacheWrapper(BatchDecodeHandler* handler,
 			kv_partition_info.batch_size_before_partition = handler->GetBatchSizeBeforePartition();
 			kv_partition_info.chunk_indptr = handler->GetChunkIndPtr<IdType>();
 			kv_partition_info.batch_idx_map = handler->GetBatchIdxMap<IdType>();
+		} else {
+			// The un-partitioned range, extended by BeginForward to span the appended
+			// trailing page.
+			new_paged_kv.indptr = handler->GetNewIndPtr<IdType>();
 		}
 	} else {
 		std::ostringstream err_msg;
