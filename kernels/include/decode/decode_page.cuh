@@ -589,7 +589,7 @@ cudaError_t AppendPagedKVCacheDecode(paged_kv_t<page_storage, layout, DType, IdT
 	uint32_t batch_size = paged_kv.batch_size;
 	uint32_t num_heads = paged_kv.num_heads;
 	SWITCH_HEAD_DIM(head_dim, HEAD_DIM, {
-		constexpr uint32_t vec_size = std::max(16 / sizeof(DType), HEAD_DIM / 32);
+		constexpr uint32_t vec_size = std::max<size_t>(16 / sizeof(DType), HEAD_DIM / 32);
 		uint32_t bdx = HEAD_DIM / vec_size;
 		uint32_t bdy = num_heads;
 		dim3 nblks(batch_size);
@@ -626,7 +626,7 @@ cudaError_t AppendPagedKVCachePrefill(paged_kv_t<page_storage, layout, DType, Id
 	uint32_t batch_size = paged_kv.batch_size;
 	uint32_t num_heads = paged_kv.num_heads;
 	SWITCH_HEAD_DIM(head_dim, HEAD_DIM, {
-		constexpr uint32_t vec_size = std::max(16 / sizeof(DType), HEAD_DIM / 32);
+		constexpr uint32_t vec_size = std::max<size_t>(16 / sizeof(DType), HEAD_DIM / 32);
 		uint32_t bdx = HEAD_DIM / vec_size;
 		uint32_t bdy = 512 / bdx; // page stride
 		dim3 nblks(batch_size, num_heads);
@@ -712,7 +712,7 @@ cudaError_t QKApplyRotaryInPlace(DType* __restrict__ q,
 	float rope_rcp_theta = 1.0f / rope_theta;
 
 	SWITCH_HEAD_DIM(head_dim, HEAD_DIM, {
-		constexpr uint32_t vec_size = std::max(16 / sizeof(DType), HEAD_DIM / 32);
+		constexpr uint32_t vec_size = std::max<size_t>(16 / sizeof(DType), HEAD_DIM / 32);
 		constexpr uint32_t bdx = HEAD_DIM / vec_size;
 		uint32_t num_threads = std::max(128U, bdx);
 		uint32_t bdy = num_threads / bdx;

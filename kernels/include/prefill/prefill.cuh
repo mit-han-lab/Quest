@@ -686,6 +686,11 @@ template <uint32_t group_size,
 		  typename DTypeOut,
 		  typename IdType>
 __global__ void
+#if defined(USE_HIP)
+// Without launch bounds the HIP compiler budgets registers for 1024-thread blocks, which
+// spills most of this kernel's fragments to scratch memory.
+__launch_bounds__(num_warps * warp_size)
+#endif
 BatchPrefillWithPagedKVCacheKernel(IdType* __restrict__ request_indices,
 								   IdType* __restrict__ tile_indices,
 								   DTypeIn* __restrict__ q,
@@ -915,8 +920,14 @@ cudaError_t BatchPrefillWithPagedKVCacheDispatched(
 	int max_smem_per_sm = 0;
 	FLASHINFER_CUDA_CALL(cudaDeviceGetAttribute(
 		&max_smem_per_sm, cudaDevAttrMaxSharedMemoryPerMultiprocessor, dev_id));
+#if defined(USE_HIP)
+	// An AMD compute unit can have as little as 64 KB of LDS, half of which fits no tile size
+	// below, so size the tiles for one threadblock per compute unit.
+	const int max_smem_per_threadblock = max_smem_per_sm;
+#else
 	// we expect each sm execute two threadblocks
 	const int max_smem_per_threadblock = max_smem_per_sm / 2;
+#endif
 
 	const uint32_t max_num_frags_z_reg =
 		(HEAD_DIM == 128 && num_frags_x == 2 && ROTARY_MODE == RotaryMode::kLlama &&

@@ -823,7 +823,7 @@ BatchDecodeWithPagedKVCacheWorkEstimation(uint32_t& tmp_size,
 		GROUP_SIZE,
 		{SWITCH_HEAD_DIM(
 			head_dim, HEAD_DIM, {SWITCH_ROTARY_MODE(rotary_mode, ROTARY_MODE, {
-				constexpr uint32_t vec_size = std::max(16UL / sizeof(DTypeIn), HEAD_DIM / 32UL);
+				constexpr uint32_t vec_size = std::max<size_t>(16UL / sizeof(DTypeIn), HEAD_DIM / 32UL);
 				constexpr uint32_t num_stages_smem = 2U;
 				constexpr uint32_t bdx = HEAD_DIM / vec_size;
 				static_assert(bdx <= 32);
@@ -835,7 +835,7 @@ BatchDecodeWithPagedKVCacheWorkEstimation(uint32_t& tmp_size,
 				const uint32_t smem_size =
 					2 * num_stages_smem * tile_size_per_bdx * bdy * bdz * head_dim *
 						sizeof(DTypeIn) +
-					std::max(tile_size_per_bdx * num_threads * sizeof(DTypeIn*),
+					std::max<size_t>(tile_size_per_bdx * num_threads * sizeof(DTypeIn*),
 							 2 * bdy * bdz * sizeof(float));
 
 				auto partition_kv_kernel = BatchDecodeWithPagedKVCacheKernel<
@@ -960,7 +960,7 @@ BatchDecodeWithPagedKVCacheDispatched(DTypeIn* q,
 	const uint32_t batch_size = paged_kv.batch_size;
 	const uint32_t num_qo_heads = num_kv_heads * GROUP_SIZE;
 
-	constexpr uint32_t vec_size = std::max(16UL / sizeof(DTypeIn), HEAD_DIM / 32UL);
+	constexpr uint32_t vec_size = std::max<size_t>(16UL / sizeof(DTypeIn), HEAD_DIM / 32UL);
 	constexpr uint32_t num_stages_smem = 2U;
 	constexpr uint32_t bdx = HEAD_DIM / vec_size;
 	static_assert(bdx <= 32);
@@ -970,7 +970,7 @@ BatchDecodeWithPagedKVCacheDispatched(DTypeIn* q,
 	constexpr uint32_t tile_size_per_bdx = GROUP_SIZE == 1 ? (sizeof(DTypeIn) == 1 ? 2U : 4U) : 1U;
 	const uint32_t smem_size =
 		2 * num_stages_smem * tile_size_per_bdx * bdy * bdz * HEAD_DIM * sizeof(DTypeIn) +
-		std::max(tile_size_per_bdx * num_threads * sizeof(DTypeIn*), 2 * bdy * bdz * sizeof(float));
+		std::max<size_t>(tile_size_per_bdx * num_threads * sizeof(DTypeIn*), 2 * bdy * bdz * sizeof(float));
 
 	if(tmp == nullptr) {
 		// do not use partition-kv kernel
@@ -1155,7 +1155,7 @@ MaxPossibleSampleWithPagedKVCache(DTypeIn* q,
 
 	SWITCH_GQA_GROUP_SIZE(
 		num_qo_heads / num_kv_heads, GROUP_SIZE, {SWITCH_HEAD_DIM(head_dim, HEAD_DIM, {
-			constexpr uint32_t vec_size = std::max(16UL / sizeof(DTypeIn), HEAD_DIM / 32UL);
+			constexpr uint32_t vec_size = std::max<size_t>(16UL / sizeof(DTypeIn), HEAD_DIM / 32UL);
 			constexpr uint32_t num_stages_smem = 2U;
 			constexpr uint32_t bdx = HEAD_DIM / vec_size;
 			static_assert(bdx <= 32);

@@ -1,0 +1,5 @@
+#pragma once
+// libcu++ <cuda/pipeline> has no ROCm counterpart. The kernels here include it but do
+// not use cuda::pipeline: the asynchronous global-to-shared copies go through
+// flashinfer::cp_async, whose non-PTX path is a plain vectorized load. Nothing to
+// provide.
