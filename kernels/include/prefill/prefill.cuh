@@ -42,6 +42,10 @@
 
 #include "decode/decode_page.cuh"
 
+#if defined(USE_HIP)
+#include "prefill/prefill_matrix_core.cuh"
+#endif
+
 namespace flashinfer
 {
 
@@ -124,6 +128,11 @@ page_produce_kv(smem_t smem,
 				const uint32_t page_iter_base,
 				const uint32_t kv_len,
 				const IdType last_indptr) {
+#if defined(QUEST_PREFILL_MMA)
+	matrix_core::page_produce_kv<produce_v, page_size, num_warps, num_frags_y, num_frags_z>(
+		smem, smem_offset, paged_kv, kv_idx_base, page_iter_base, kv_len, last_indptr);
+	return;
+#endif
 	constexpr SharedMemFillMode fill_mode =
 		produce_v ? SharedMemFillMode::kFillZero : SharedMemFillMode::kNoFill;
 	constexpr uint32_t head_dim = num_frags_y * 16;
@@ -727,12 +736,20 @@ BatchPrefillWithPagedKVCacheKernel(IdType* __restrict__ request_indices,
 
 	extern __shared__ uint8_t smem[];
 
+#if defined(QUEST_PREFILL_MMA)
+	// AMD matrix instructions: the fragments belong to a wavefront and accumulate in fp32.
+	matrix_core::state_t<num_frags_x, num_frags_y, num_frags_z> mc_state;
+	matrix_core::init_states(mc_state);
+	const uint32_t mc_q_row_base =
+		(tile_idx * num_warps + (ty & ~(matrix_core::kWarpsPerWave - 1))) * num_frags_x * 16;
+#else
 	DTypeQKAccum s_frag[num_frags_x][num_frags_z][8];
 	float o_frag[num_frags_x][num_frags_y][8];
 	DTypeQKAccum m[num_frags_x][2];
 	float d[num_frags_x][2];
 
 	init_states<num_frags_x, num_frags_y>(o_frag, m, d);
+#endif
 
 	const uint32_t qo_idx_base = ((tile_idx * num_warps + ty) * num_frags_x * 16) / group_size;
 	const uint32_t qo_n_stride = get_n_stride_impl<QKVLayout::kNHD, head_dim>(num_qo_heads),
@@ -753,6 +770,32 @@ BatchPrefillWithPagedKVCacheKernel(IdType* __restrict__ request_indices,
 	uint32_t q_smem_offset_r =
 		smem_t::get_permuted_offset<channel_size_128b_in>(ty * num_frags_x * 16 + tx % 16, tx / 16);
 
+#if defined(QUEST_PREFILL_MMA)
+	// With the query tile in registers the shared memory holds only K and V.
+	constexpr uint32_t num_q_smem_rows =
+		matrix_core::state_t<num_frags_x, num_frags_y, num_frags_z>::q_in_regs
+			? 0
+			: num_warps * num_frags_x * 16;
+	if constexpr(num_q_smem_rows == 0) {
+		matrix_core::load_q<group_size>(mc_state,
+										q,
+										mc_q_row_base,
+										qo_upper_bound,
+										qo_indptr[request_idx],
+										kv_head_idx,
+										qo_len,
+										num_qo_heads,
+										sm_scale);
+	} else {
+		load_q_global_smem<group_size, num_frags_x, num_frags_y>(
+			qo_idx_base, qo_upper_bound, q_ptr_base, qo_n_stride, qo_h_stride, &qo_smem);
+		block.sync();
+		q_smem_inplace_multiply_sm_scale<num_frags_x, num_frags_y, DTypeIn>(&qo_smem, sm_scale);
+	}
+
+	smem_t k_smem(smem + num_q_smem_rows * head_dim * sizeof(DTypeIn)),
+		v_smem(smem + (num_q_smem_rows + num_frags_z * 16) * head_dim * sizeof(DTypeIn));
+#else
 	load_q_global_smem<group_size, num_frags_x, num_frags_y>(
 		qo_idx_base, qo_upper_bound, q_ptr_base, qo_n_stride, qo_h_stride, &qo_smem);
 
@@ -764,6 +807,7 @@ BatchPrefillWithPagedKVCacheKernel(IdType* __restrict__ request_indices,
 
 	smem_t k_smem(smem + (num_warps * num_frags_x) * 16 * head_dim * sizeof(DTypeIn)),
 		v_smem(smem + (num_warps * num_frags_x + num_frags_z) * 16 * head_dim * sizeof(DTypeIn));
+#endif
 
 	uint32_t k_smem_offset_r = smem_t::get_permuted_offset<channel_size_128b_in>(
 				 8 * (tx / 16) + tx % 8, (tx % 16) / 8),
@@ -793,6 +837,37 @@ BatchPrefillWithPagedKVCacheKernel(IdType* __restrict__ request_indices,
 			 : kv_len) /
 		(16 * num_frags_z);
 
+#if defined(QUEST_PREFILL_MMA)
+	// The same steps on the matrix instructions. Each K and V tile is loaded into registers
+	// before the product that precedes its store, so the global load latency overlaps compute.
+	matrix_core::kv_regs_t<num_warps, num_frags_y, num_frags_z> kv_regs;
+	for(uint32_t iter = 0; iter < num_iterations; ++iter) {
+		block.sync();
+
+		page_iter_base += 16 * num_frags_z / page_size;
+		matrix_core::page_load_kv<false, page_size>(kv_regs, paged_kv, page_iter_base, last_indptr);
+		matrix_core::compute_qk<num_frags_x, num_frags_y, num_frags_z, DTypeIn>(
+			&qo_smem, &k_smem, mc_state);
+		if(iter >= mask_iteration) {
+			matrix_core::mask_s<causal, group_size>(
+				mc_q_row_base, iter * 16 * num_frags_z, qo_len, kv_len, kv_len, mc_state);
+		}
+		matrix_core::update_mdo_states(mc_state);
+
+		block.sync();
+		matrix_core::page_store_kv<false, num_warps, num_frags_y, num_frags_z, DTypeIn>(
+			kv_regs, k_smem, &kv_smem_offset_w, (iter + 1) * 16 * num_frags_z, kv_len);
+		matrix_core::page_load_kv<true, page_size>(kv_regs, paged_kv, page_iter_base, last_indptr);
+		block.sync();
+
+		matrix_core::compute_sfm_v<num_frags_x, num_frags_y, num_frags_z, DTypeIn>(&v_smem,
+																				  mc_state);
+
+		block.sync();
+		matrix_core::page_store_kv<true, num_warps, num_frags_y, num_frags_z, DTypeIn>(
+			kv_regs, v_smem, &kv_smem_offset_w, (iter + 1) * 16 * num_frags_z, kv_len);
+	}
+#else
 #pragma unroll
 	for(uint32_t iter = 0; iter < num_iterations; ++iter) {
 		cp_async::wait_group<1>();
@@ -846,9 +921,30 @@ BatchPrefillWithPagedKVCacheKernel(IdType* __restrict__ request_indices,
 																			  last_indptr);
 		cp_async::commit_group();
 	}
+#endif
 	cp_async::wait_group<0>();
 	block.sync();
 
+#if defined(QUEST_PREFILL_MMA)
+	matrix_core::normalize_d(mc_state);
+	matrix_core::write_o<group_size>(mc_state,
+									 o,
+									 mc_q_row_base,
+									 qo_upper_bound,
+									 qo_indptr[request_idx],
+									 kv_head_idx,
+									 qo_len,
+									 num_qo_heads);
+	if(lse != nullptr) {
+		matrix_core::write_lse<group_size>(mc_state,
+										   lse,
+										   mc_q_row_base,
+										   qo_upper_bound,
+										   qo_indptr[request_idx],
+										   kv_head_idx,
+										   num_qo_heads);
+	}
+#else
 	// normalize d
 	normalize_d<num_frags_x, num_frags_y>(o_frag, d);
 
@@ -872,6 +968,7 @@ BatchPrefillWithPagedKVCacheKernel(IdType* __restrict__ request_indices,
 			}
 		}
 	}
+#endif
 }
 
 template <PageStorage page_storage,
@@ -921,6 +1018,8 @@ cudaError_t BatchPrefillWithPagedKVCacheDispatched(
 	FLASHINFER_CUDA_CALL(cudaDeviceGetAttribute(
 		&max_smem_per_sm, cudaDevAttrMaxSharedMemoryPerMultiprocessor, dev_id));
 #if defined(USE_HIP)
+	matrix_core::mma_shape_t mma_shape;
+	FLASHINFER_CUDA_CALL(matrix_core::get_prefill_mma_shape(&mma_shape));
 	// An AMD compute unit can have as little as 64 KB of LDS, half of which fits no tile size
 	// below, so size the tiles for one threadblock per compute unit.
 	const int max_smem_per_threadblock = max_smem_per_sm;
@@ -955,6 +1054,11 @@ cudaError_t BatchPrefillWithPagedKVCacheDispatched(
 														 IdType>;
 		uint32_t smem_size =
 			(num_frags_x * num_warps + num_frags_z * 2) * 16 * HEAD_DIM * sizeof(DTypeIn);
+#if defined(USE_HIP)
+		if(matrix_core::q_in_registers(num_frags_x, num_frags_y, mma_shape)) {
+			smem_size = num_frags_z * 2 * 16 * HEAD_DIM * sizeof(DTypeIn);
+		}
+#endif
 		FLASHINFER_CUDA_CALL(
 			cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_size));
 		void* args[] = {(void*)&request_indices,
