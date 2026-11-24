@@ -686,7 +686,11 @@ template <uint32_t group_size,
 		  RotaryMode rotary_mode,
 		  uint32_t num_frags_x,
 		  uint32_t num_frags_y,
+#if defined(USE_HIP)
+		  uint32_t kernel_num_frags_z,
+#else
 		  uint32_t num_frags_z,
+#endif
 		  uint32_t num_warps,
 		  PageStorage page_storage,
 		  QKVLayout kv_layout,
@@ -711,6 +715,12 @@ BatchPrefillWithPagedKVCacheKernel(IdType* __restrict__ request_indices,
 								   float sm_scale,
 								   const float log2_rope_rcp_scale,
 								   const float log2_rope_rcp_theta) {
+#if defined(QUEST_PREFILL_MMA)
+	constexpr uint32_t num_frags_z = matrix_core::kv_frags(
+		num_frags_x, num_frags_y, kernel_num_frags_z, matrix_core::kShape);
+#elif defined(USE_HIP)
+	constexpr uint32_t num_frags_z = kernel_num_frags_z;
+#endif
 	static_assert(sizeof(DTypeIn) == 2);
 	static_assert(sizeof(DTypeOut) == 2);
 	sm_scale *= math::log2e;
@@ -837,7 +847,57 @@ BatchPrefillWithPagedKVCacheKernel(IdType* __restrict__ request_indices,
 			 : kv_len) /
 		(16 * num_frags_z);
 
-#if defined(QUEST_PREFILL_MMA)
+#if QUEST_PREFILL_MMA == 2
+	// gfx950: the K and V tiles are copied straight into two pairs of shared memory buffers,
+	// one tile ahead, so one barrier per tile suffices. The loop is unrolled by two so that
+	// each buffer is a distinct array, which lets the compiler see that reading one buffer
+	// does not wait for the copy into the other.
+	static_assert(num_q_smem_rows == 0);
+	using mc_tile_t = matrix_core::
+		kv_tile_t<num_warps, num_frags_y, num_frags_z, page_storage, DTypeIn, IdType>;
+	constexpr uint32_t mc_tile_size = num_frags_z * 16 * channel_size_128b_in;
+	__shared__ b128_t mc_k0[mc_tile_size], mc_v0[mc_tile_size], mc_k1[mc_tile_size],
+		mc_v1[mc_tile_size];
+	mc_tile_t mc_tile;
+	matrix_core::zero_v_tile<mc_tile_t>(mc_v0);
+	matrix_core::zero_v_tile<mc_tile_t>(mc_v1);
+	matrix_core::kv_tile_pages<page_size>(mc_tile, paged_kv, page_iter_base, 0, kv_len);
+	block.sync();
+	matrix_core::kv_tile_copy<page_size>(mc_tile, paged_kv, mc_k0, mc_v0);
+	matrix_core::kv_tile_pages<page_size>(
+		mc_tile, paged_kv, page_iter_base + 16 * num_frags_z / page_size, 16 * num_frags_z, kv_len);
+	auto mc_step = [&](auto second, const uint32_t iter) {
+		b128_t* k_cur = second ? mc_k1 : mc_k0;
+		b128_t* v_cur = second ? mc_v1 : mc_v0;
+		matrix_core::kv_tile_barrier();
+		if(iter + 1 < num_iterations) {
+			matrix_core::kv_tile_copy<page_size>(
+				mc_tile, paged_kv, second ? mc_k0 : mc_k1, second ? mc_v0 : mc_v1);
+			matrix_core::kv_tile_pages<page_size>(
+				mc_tile,
+				paged_kv,
+				page_iter_base + (iter + 2) * (16 * num_frags_z / page_size),
+				(iter + 2) * 16 * num_frags_z,
+				kv_len);
+		}
+		smem_t k_cur_smem(k_cur), v_cur_smem(v_cur);
+		matrix_core::compute_qk<num_frags_x, num_frags_y, num_frags_z, DTypeIn>(
+			&qo_smem, &k_cur_smem, mc_state);
+		if(iter >= mask_iteration) {
+			matrix_core::mask_s<causal, group_size>(
+				mc_q_row_base, iter * 16 * num_frags_z, qo_len, kv_len, kv_len, mc_state);
+		}
+		matrix_core::update_mdo_states(mc_state);
+		matrix_core::compute_sfm_v<num_frags_x, num_frags_y, num_frags_z, DTypeIn>(&v_cur_smem,
+																				  mc_state);
+	};
+	for(uint32_t iter = 0; iter < num_iterations; iter += 2) {
+		mc_step(std::false_type(), iter);
+		if(iter + 1 < num_iterations) {
+			mc_step(std::true_type(), iter + 1);
+		}
+	}
+#elif defined(QUEST_PREFILL_MMA)
 	// The same steps on the matrix instructions. Each K and V tile is loaded into registers
 	// before the product that precedes its store, so the global load latency overlaps compute.
 	matrix_core::kv_regs_t<num_warps, num_frags_y, num_frags_z> kv_regs;
@@ -1055,9 +1115,14 @@ cudaError_t BatchPrefillWithPagedKVCacheDispatched(
 		uint32_t smem_size =
 			(num_frags_x * num_warps + num_frags_z * 2) * 16 * HEAD_DIM * sizeof(DTypeIn);
 #if defined(USE_HIP)
-		if(matrix_core::q_in_registers(num_frags_x, num_frags_y, mma_shape)) {
-			smem_size = num_frags_z * 2 * 16 * HEAD_DIM * sizeof(DTypeIn);
-		}
+		smem_size =
+			mma_shape.static_kv
+				? 0
+				: ((matrix_core::q_in_registers(num_frags_x, num_frags_y, mma_shape)
+						? 0
+						: num_frags_x * num_warps) +
+				   matrix_core::kv_frags(num_frags_x, num_frags_y, num_frags_z, mma_shape) * 2) *
+					  16 * HEAD_DIM * sizeof(DTypeIn);
 #endif
 		FLASHINFER_CUDA_CALL(
 			cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_size));
@@ -1098,7 +1163,16 @@ split_qo_indptr(IdType* qo_indptr,
 
 	const uint32_t total_q_len = qo_indptr_h[batch_size];
 	const bool avg_len_greater_than_64 = total_q_len * gqa_group_size > 64 * batch_size;
+#if defined(USE_HIP)
+	matrix_core::mma_shape_t mma_shape = {};
+	if(matrix_core::get_prefill_mma_shape(&mma_shape) != cudaSuccess) {
+		mma_shape = {};
+	}
+	const uint32_t num_frags_x =
+		avg_len_greater_than_64 ? matrix_core::max_num_frags_x(mma_shape) : 1;
+#else
 	const uint32_t num_frags_x = avg_len_greater_than_64 ? 2 : 1;
+#endif
 	const uint32_t num_rows_per_cta = num_frags_x * num_warps * 16;
 	uint32_t num_qo_tiles = 0;
 
