@@ -31,6 +31,8 @@
 #include <cuda_runtime.h>
 
 #include <cuda/pipeline>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <random>
 
@@ -462,11 +464,16 @@ BatchDecodeWithPagedKVCacheKernel(DTypeIn* __restrict__ q,
 	// The last_page_len should be [batch_idx, num_kv_heads]
 	// However, currently target on bsz = 1, so we use [num_kv_heads] only.
 	// Besides, we manually append the last page. Therefore we use [1] only.
-	// We filter other cases directly into PAGE_SIZE and only select batch_idx == gridDim.x - 1.
-	// This is correct since all batches are transformed from the single batch.
 	// TODO: support bsz > 1.
+	//
+	// Only the range that ends at the global end holds the appended trailing page, and
+	// only it is short. Testing the range end rather than `batch_idx == gridDim.x - 1`
+	// says that directly: it picks the same chunk when the range is partitioned, and it
+	// stays right when one block covers the whole range, where the block test is
+	// unconditionally true and collapses every slice to the trailing page length.
+	const IdType last_indptr = paged_kv.indptr[paged_kv.batch_size];
 	const uint32_t cur_last_page_len =
-		(batch_idx == gridDim.x - 1) ? paged_kv.last_page_len : paged_kv.page_size;
+		(cur_page_indptr_end == last_indptr) ? paged_kv.last_page_len : paged_kv.page_size;
 	const uint32_t kv_chunk_len =
 		cur_page_indptr_begin != cur_page_indptr_end
 			? (cur_page_indptr_end - cur_page_indptr_begin - 1) * paged_kv.page_size +
@@ -504,8 +511,6 @@ BatchDecodeWithPagedKVCacheKernel(DTypeIn* __restrict__ q,
 	// preload k/v tiles
 	uint32_t stage_idx = 0;
 	constexpr uint32_t vec_bits = sizeof(DTypeIn) * vec_size * 8;
-	const IdType last_indptr = paged_kv.indptr[paged_kv.batch_size];
-
 	static_assert(num_stages_smem <= bdx);
 #pragma unroll
 	for(uint32_t j = 0; j < tile_size_per_bdx; ++j) {
@@ -818,7 +823,7 @@ BatchDecodeWithPagedKVCacheWorkEstimation(uint32_t& tmp_size,
 		GROUP_SIZE,
 		{SWITCH_HEAD_DIM(
 			head_dim, HEAD_DIM, {SWITCH_ROTARY_MODE(rotary_mode, ROTARY_MODE, {
-				constexpr uint32_t vec_size = std::max(16UL / sizeof(DTypeIn), HEAD_DIM / 32UL);
+				constexpr uint32_t vec_size = std::max<size_t>(16UL / sizeof(DTypeIn), HEAD_DIM / 32UL);
 				constexpr uint32_t num_stages_smem = 2U;
 				constexpr uint32_t bdx = HEAD_DIM / vec_size;
 				static_assert(bdx <= 32);
@@ -830,7 +835,7 @@ BatchDecodeWithPagedKVCacheWorkEstimation(uint32_t& tmp_size,
 				const uint32_t smem_size =
 					2 * num_stages_smem * tile_size_per_bdx * bdy * bdz * head_dim *
 						sizeof(DTypeIn) +
-					std::max(tile_size_per_bdx * num_threads * sizeof(DTypeIn*),
+					std::max<size_t>(tile_size_per_bdx * num_threads * sizeof(DTypeIn*),
 							 2 * bdy * bdz * sizeof(float));
 
 				auto partition_kv_kernel = BatchDecodeWithPagedKVCacheKernel<
@@ -856,7 +861,36 @@ BatchDecodeWithPagedKVCacheWorkEstimation(uint32_t& tmp_size,
 				FLASHINFER_CUDA_CALL(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
 					&num_blocks_per_sm, partition_kv_kernel, num_threads, smem_size));
 				max_grid_size = num_blocks_per_sm * num_sm;
-				if(batch_size * num_kv_heads >= max_grid_size) {
+				// Which of the two launch shapes runs is a property of the GPU: the
+				// single-block shape is only reached once num_kv_heads saturates the grid,
+				// which needs a low multiprocessor count. That leaves whichever shape the
+				// machine does not pick untested there, and the two differ in how the
+				// trailing page is reached. QUEST_DECODE_LAUNCH_SHAPE=single|split selects
+				// one explicitly so both can be covered on any GPU; unset or empty, the
+				// occupancy decision below is unchanged. Any other value throws, and so
+				// does a shape this call cannot honor: an override that fell back
+				// silently would make a green run indistinguishable from one that never
+				// reached the requested shape. Read on every call rather than cached, so
+				// that setting the variable in-process takes effect; this is host-side
+				// setup, run once per begin_forward.
+				const char* const shape_env = std::getenv("QUEST_DECODE_LAUNCH_SHAPE");
+				int forced_shape = 0;
+				if(shape_env != nullptr && shape_env[0] != '\0') {
+					if(std::strcmp(shape_env, "single") == 0) {
+						forced_shape = 1;
+					} else if(std::strcmp(shape_env, "split") == 0) {
+						forced_shape = -1;
+					} else {
+						std::ostringstream err_msg;
+						err_msg << "QUEST_DECODE_LAUNCH_SHAPE must be \"single\" or \"split\", got \""
+								<< shape_env << "\"";
+						throw std::invalid_argument(err_msg.str());
+					}
+				}
+				const bool use_single_block = forced_shape != 0
+												  ? forced_shape > 0
+												  : batch_size * num_kv_heads >= max_grid_size;
+				if(use_single_block) {
 					// do not use partition-kv kernel
 					tmp_size = 0;
 					new_batch_size = batch_size;
@@ -886,6 +920,15 @@ BatchDecodeWithPagedKVCacheWorkEstimation(uint32_t& tmp_size,
 					} else {
 						tmp_size = num_qo_heads * new_batch_size *
 								   (head_dim * sizeof(DTypeOut) + 2 * sizeof(float));
+					}
+					if(forced_shape < 0 && tmp_size == 0) {
+						std::ostringstream err_msg;
+						err_msg << "QUEST_DECODE_LAUNCH_SHAPE=split cannot be honored: "
+								   "partitioning a batch of "
+								<< batch_size
+								<< " left the batch size unchanged, so this call runs the "
+								   "single-block shape";
+						throw std::invalid_argument(err_msg.str());
 					}
 				}
 			})})});
@@ -917,7 +960,7 @@ BatchDecodeWithPagedKVCacheDispatched(DTypeIn* q,
 	const uint32_t batch_size = paged_kv.batch_size;
 	const uint32_t num_qo_heads = num_kv_heads * GROUP_SIZE;
 
-	constexpr uint32_t vec_size = std::max(16UL / sizeof(DTypeIn), HEAD_DIM / 32UL);
+	constexpr uint32_t vec_size = std::max<size_t>(16UL / sizeof(DTypeIn), HEAD_DIM / 32UL);
 	constexpr uint32_t num_stages_smem = 2U;
 	constexpr uint32_t bdx = HEAD_DIM / vec_size;
 	static_assert(bdx <= 32);
@@ -927,7 +970,7 @@ BatchDecodeWithPagedKVCacheDispatched(DTypeIn* q,
 	constexpr uint32_t tile_size_per_bdx = GROUP_SIZE == 1 ? (sizeof(DTypeIn) == 1 ? 2U : 4U) : 1U;
 	const uint32_t smem_size =
 		2 * num_stages_smem * tile_size_per_bdx * bdy * bdz * HEAD_DIM * sizeof(DTypeIn) +
-		std::max(tile_size_per_bdx * num_threads * sizeof(DTypeIn*), 2 * bdy * bdz * sizeof(float));
+		std::max<size_t>(tile_size_per_bdx * num_threads * sizeof(DTypeIn*), 2 * bdy * bdz * sizeof(float));
 
 	if(tmp == nullptr) {
 		// do not use partition-kv kernel
@@ -1112,7 +1155,7 @@ MaxPossibleSampleWithPagedKVCache(DTypeIn* q,
 
 	SWITCH_GQA_GROUP_SIZE(
 		num_qo_heads / num_kv_heads, GROUP_SIZE, {SWITCH_HEAD_DIM(head_dim, HEAD_DIM, {
-			constexpr uint32_t vec_size = std::max(16UL / sizeof(DTypeIn), HEAD_DIM / 32UL);
+			constexpr uint32_t vec_size = std::max<size_t>(16UL / sizeof(DTypeIn), HEAD_DIM / 32UL);
 			constexpr uint32_t num_stages_smem = 2U;
 			constexpr uint32_t bdx = HEAD_DIM / vec_size;
 			static_assert(bdx <= 32);

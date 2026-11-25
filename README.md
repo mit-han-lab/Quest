@@ -54,6 +54,34 @@ make -j
 cd quest/ops
 bash setup.sh
 ```
+
+`begin_forward` picks between a single-block decode kernel and a split one from the device occupancy, so any one GPU only ever exercises one of the two. Set `QUEST_DECODE_LAUNCH_SHAPE=single` or `=split` to force the other and cover both anywhere; unset or empty, nothing changes. It raises rather than falling back when the value is unrecognized or when the requested shape cannot be used, so a forced run that passes really did run that shape. `quest/tests/test_decode_launch_shape.py` runs the decode suites once under each.
+
+### Building on AMD GPUs (ROCm)
+
+The operators also build for AMD GPUs against a ROCm build of PyTorch. Configure with `USE_HIP` and name the target architecture; `libraft` is not needed, and step 3 above (the kernel benchmarks) is CUDA-only.
+```
+cd quest/ops
+mkdir -p build && cd build
+cmake -GNinja -DUSE_HIP=ON -DCMAKE_HIP_ARCHITECTURES=gfx1100 \
+  -DCMAKE_PREFIX_PATH=`python -c 'import torch;print(torch.utils.cmake_prefix_path)'` ..
+ninja
+ln -sf $PWD/_kernels*.so ../../
+```
+The target architecture comes from `CMAKE_HIP_ARCHITECTURES` when you pass it, otherwise from the `PYTORCH_ROCM_ARCH` environment variable, otherwise from the GPUs installed in the build machine.
+
+On Windows, build from PowerShell with the Visual Studio x64 build tools environment loaded (for example the "x64 Native Tools" prompt) and the Python environment that has the ROCm build of PyTorch activated. CMake takes the Python interpreter from the active virtual or conda environment; outside one, add `-DPython_EXECUTABLE=<path to python.exe>` and use that same `python.exe` in the `CMAKE_PREFIX_PATH` command; the ROCm SDK installed in that environment is then found from it. Always name the architecture, since it is not detected from the installed GPUs on Windows. C++ is compiled with ROCm's `clang++`, the same compiler as the HIP code, so leave `CXX` unset (or set it to that `clang++`); an MSVC-style compiler such as `cl` or `clang-cl` stops the configure with a message.
+```
+cd quest\ops
+mkdir build; cd build
+cmake -GNinja -DUSE_HIP=ON -DCMAKE_HIP_ARCHITECTURES=gfx1151 `
+  "-DCMAKE_PREFIX_PATH=$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')" ..
+ninja
+copy _kernels*.pyd ..\..\
+```
+
+The model wrappers and `scripts/example_textgen.py` run on ROCm with this build. The accuracy evaluation scripts below also import `flash_attn`, which step 2 builds for CUDA; on an AMD GPU they need a ROCm build of flash-attention instead.
+
 ## Accuracy Evaluation
 Our evaluations are based on [LongChat-7B-v1.5-32K](https://huggingface.co/lmsys/longchat-7b-v1.5-32k?clone=true) and [Yarn-Llama2-7B-128K](https://huggingface.co/NousResearch/Yarn-Llama-2-7b-128k) models, which are capable of handling long-context text generations. We evaluate both passkey retrieval and LongBench benchmarks. We provide several scripts to reproduce our results in the paper:
 

@@ -328,7 +328,13 @@ struct paged_kv_t {
 																 uint32_t feat_idx,
 																 IdType last_indptr) const {
 		if constexpr(page_storage == PageStorage::kIndices) {
-			if(blockIdx.x == gridDim.x - 1) {
+			// The trailing partial page is held out of `indices` and re-attached as the
+			// final page of the whole range. Identify it by its position in that range,
+			// not by the block: the partition path gives it a block of its own, so
+			// `blockIdx.x == gridDim.x - 1` also meant "this page" there -- but with a
+			// single block covering the whole range that test is true for every page,
+			// and every lookup then resolves to the trailing page.
+			if(page_iter == last_indptr - 1) {
 				// This is manully appended last page. Only one page here
 				return data + get_k_elem_offset(last_page_idx, head_idx, entry_idx, feat_idx);
 			} else {
@@ -583,7 +589,7 @@ cudaError_t AppendPagedKVCacheDecode(paged_kv_t<page_storage, layout, DType, IdT
 	uint32_t batch_size = paged_kv.batch_size;
 	uint32_t num_heads = paged_kv.num_heads;
 	SWITCH_HEAD_DIM(head_dim, HEAD_DIM, {
-		constexpr uint32_t vec_size = std::max(16 / sizeof(DType), HEAD_DIM / 32);
+		constexpr uint32_t vec_size = std::max<size_t>(16 / sizeof(DType), HEAD_DIM / 32);
 		uint32_t bdx = HEAD_DIM / vec_size;
 		uint32_t bdy = num_heads;
 		dim3 nblks(batch_size);
@@ -620,7 +626,7 @@ cudaError_t AppendPagedKVCachePrefill(paged_kv_t<page_storage, layout, DType, Id
 	uint32_t batch_size = paged_kv.batch_size;
 	uint32_t num_heads = paged_kv.num_heads;
 	SWITCH_HEAD_DIM(head_dim, HEAD_DIM, {
-		constexpr uint32_t vec_size = std::max(16 / sizeof(DType), HEAD_DIM / 32);
+		constexpr uint32_t vec_size = std::max<size_t>(16 / sizeof(DType), HEAD_DIM / 32);
 		uint32_t bdx = HEAD_DIM / vec_size;
 		uint32_t bdy = 512 / bdx; // page stride
 		dim3 nblks(batch_size, num_heads);
@@ -706,7 +712,7 @@ cudaError_t QKApplyRotaryInPlace(DType* __restrict__ q,
 	float rope_rcp_theta = 1.0f / rope_theta;
 
 	SWITCH_HEAD_DIM(head_dim, HEAD_DIM, {
-		constexpr uint32_t vec_size = std::max(16 / sizeof(DType), HEAD_DIM / 32);
+		constexpr uint32_t vec_size = std::max<size_t>(16 / sizeof(DType), HEAD_DIM / 32);
 		constexpr uint32_t bdx = HEAD_DIM / vec_size;
 		uint32_t num_threads = std::max(128U, bdx);
 		uint32_t bdy = num_threads / bdx;
